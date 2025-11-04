@@ -3,7 +3,7 @@ import { type } from "os";
 
 const memberSchema = new mongoose.Schema(
     {
-        user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true , unique: true },
+        user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, unique: true },
         role: { type: String, enum: ["admin", "member"], default: "member" },
     },
     { _id: false }
@@ -23,6 +23,7 @@ const groupSchema = new mongoose.Schema(
         members: [memberSchema],
         createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
         inviteToken: { type: String, unique: true },
+        expense: { type: mongoose.Schema.Types.ObjectId, ref: "Expense" }
     },
     { timestamps: true }
 );

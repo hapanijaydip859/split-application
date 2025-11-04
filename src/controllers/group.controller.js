@@ -1,3 +1,4 @@
+import Expense from "../models/Expense.js";
 import Group from "../models/Group.js";
 import User from "../models/User.js";
 import crypto from "crypto";
@@ -206,11 +207,48 @@ export const getAllGroups = async (req, res) => {
   }
 };
 // 🔹 Get single group by ID
-export const getGroupById = async (req, res, next) => {
+// export const getGroupById = async (req, res, next) => {
+//   try {
+//     const { groupId } = req.params;
+//     const userId = req.user._id; // ✅ use logged-in user's ID
+
+//     const group = await Group.findById(groupId)
+//       .populate("members.user", "name email" ,)
+//       .lean();
+//     console.log("group ==> ",group);
+
+//     if (!group) {
+//       return res.status(404).json({ message: "Group not found" });
+//     }
+
+//     // ✅ Check if this logged-in user is a member of the group
+//     const isMember = group.members.some(
+//       (m) => String(m.user._id) === String(userId)
+//     );
+
+//     if (!isMember) {
+//       return res.status(403).json({ message: "You are not a member of this group" });
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Group fetched successfully",
+//       data: group,
+//     });
+//   } catch (error) {
+//     console.error("❌ getGroupById Error:", error.message);
+//     res.status(500).json({
+//       message: "Failed to fetch group",
+//       error: error.message,
+//     });
+//   }
+// };
+export const getGroupById = async (req, res) => {
   try {
     const { groupId } = req.params;
-    const userId = req.user._id; // ✅ use logged-in user's ID
+    const userId = req.user._id;
 
+    // 1️⃣ Fetch group
     const group = await Group.findById(groupId)
       .populate("members.user", "name email")
       .lean();
@@ -219,28 +257,92 @@ export const getGroupById = async (req, res, next) => {
       return res.status(404).json({ message: "Group not found" });
     }
 
-    // ✅ Check if this logged-in user is a member of the group
+    // 2️⃣ Verify user is a member
     const isMember = group.members.some(
       (m) => String(m.user._id) === String(userId)
     );
-
     if (!isMember) {
-      return res.status(403).json({ message: "You are not a member of this group" });
+      return res
+        .status(403)
+        .json({ message: "You are not a member of this group" });
     }
 
+    // 3️⃣ Fetch all expenses for this group
+    const expenses = await Expense.find({ group: groupId })
+      .populate("paidBy", "name email") // <-- fixed populate
+      .populate("splitDetails.user", "name email")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // 4️⃣ Total expense amount
+    const totalExpenseAmount = expenses.reduce(
+      (sum, exp) => sum + (exp.amount || 0),
+      0
+    );
+
+    // 5️⃣ Build expense count per user
+    const userExpenseCount = {};
+    expenses.forEach((exp) => {
+      if (exp.createdBy) {
+        const creatorId = String(exp.createdBy);
+        userExpenseCount[creatorId] = (userExpenseCount[creatorId] || 0) + 1;
+      }
+    });
+
+    // 6️⃣ Build formatted expense history
+    const expenseHistory = expenses.map((exp) => ({
+      _id: exp._id,
+      description: exp.description,
+      amount: exp.amount,
+      splitType: exp.splitType,
+      paidBy: exp.paidBy?.name || "Unknown", // <-- fixed mapping
+      createdAt: exp.createdAt,
+      createdBy: exp.createdBy ? String(exp.createdBy) : null,
+      splitDetails: exp.splitDetails.map((d) => ({
+        user: d.user?.name || "Unknown",
+      })),
+    }));
+
+    // 7️⃣ Merge expense counts into members
+    const membersWithExpenseCount = group.members.map((m) => {
+      const id = String(m.user._id);
+      return {
+        _id: m.user._id,
+        name: m.user.name,
+        email: m.user.email,
+        role: m.role,
+        expenseCount: userExpenseCount[id] || 0,
+      };
+    });
+
+    // 8️⃣ Return final response
     res.status(200).json({
       success: true,
       message: "Group fetched successfully",
-      data: group,
+      data: {
+        groupInfo: {
+          _id: group._id,
+          name: group.name,
+          category: group.category,
+          icon: group.icon,
+          currency: group.currency,
+          members: membersWithExpenseCount,
+        },
+        totalExpenseAmount,
+        expenseCount: expenses.length,
+        expenseHistory,
+      },
     });
   } catch (error) {
     console.error("❌ getGroupById Error:", error.message);
     res.status(500).json({
-      message: "Failed to fetch group",
+      message: "Failed to fetch group with expenses",
       error: error.message,
     });
   }
 };
+
+
 
 
 export const joingroup = async (req, res) => {

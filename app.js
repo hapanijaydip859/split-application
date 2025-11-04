@@ -8,6 +8,9 @@ import { connectDB } from "./src/config/db.js";
 import { UserRoutes } from "./src/routes/user.routes.js";
 import { groupRoutes } from "./src/routes/group.routes.js";
 import { groupjoin } from "./src/routes/join.routes.js";
+import { expenseRoutes } from "./src/routes/expense.routes.js";
+import { sattlementRoutes } from "./src/routes/settlement.routes.js";
+import { transactionRoutes } from "./src/routes/transaction.routes.js";
 
 dotenv.config();
 const app = express();
@@ -33,6 +36,9 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use("/api/user", UserRoutes);
 app.use("/api/v1/groups", groupRoutes);
 app.use("/join", groupjoin);
+app.use("/api/v1/groups", expenseRoutes);
+app.use("/api/v1/settlement" , sattlementRoutes)
+app.use("/api/v1/transction" , transactionRoutes)
 
 // Root endpoint
 app.get("/", (req, res) => {
