@@ -60,10 +60,10 @@ export const signup = async (req, res) => {
 
 // ---------------- LOGIN ----------------
 export const login = async (req, res) => {
+  console.log("LOGIN API HIT THAYU !!!");
   try {
     const { mo, email, password } = req.body;
 
-    // ✅ Step 1: Check required fields
     if (!password) {
       return res.status(400).json({ message: "Password is required" });
     }
@@ -74,11 +74,10 @@ export const login = async (req, res) => {
         .json({ message: "Please enter your email or mobile number" });
     }
 
-    // ✅ Step 2: Find user by email or mobile
     const user = await User.findOne({
       $or: [{ email }, { mo }],
     });
-
+console.log("USER FROM DB ===>", user); 
     if (!user) {
       return res.status(404).json({
         message: email
@@ -87,7 +86,6 @@ export const login = async (req, res) => {
       });
     }
 
-    // ✅ Step 3: Compare password
     const isPasswordMatch = await bcrypt.compare(password, user.password);
     if (!isPasswordMatch) {
       return res.status(400).json({
@@ -95,20 +93,29 @@ export const login = async (req, res) => {
       });
     }
 
-    // ✅ Step 4: Generate JWT on success
+    // Generate Token
     const token = jwt.sign(
       { id: user._id, email: user.email, mo: user.mo },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
 
-    res.status(200).json({
+    // FINAL RESPONSE WITH ALL DATA
+    return res.status(200).json({
       success: true,
       message: "Login successful",
-      token
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        mo: user.mo,
+      },
     });
+
   } catch (error) {
     res.status(500).json({ message: "Login failed", error: error.message });
   }
 };
+
 

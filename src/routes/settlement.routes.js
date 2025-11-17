@@ -1,17 +1,15 @@
 import express from "express";
-import {
-  createSettlement
-} from "../controllers/settlement.controller.js";
+import {getSettleSummary, settlePayment } from "../controllers/settlement.controller.js";
 import { requireAuth } from "../middlewares/auth.middleware.js";
 
 
 const router = express.Router();
 
 // ✅ Create Settlement
-router.post("/", requireAuth, createSettlement);
+router.get("/settle-summary/:groupId", requireAuth, getSettleSummary);
 
 // ✅ Get all settlements in a group
-// router.get("/group/:groupId", requireAuth, getGroupSettlements);
+router.post("/:groupId/settle", requireAuth, settlePayment);
 
 // ✅ Get settlements linked to a specific transaction
 // router.get("/transaction/:transactionId", verifyJWT, getTransactionSettlements);
