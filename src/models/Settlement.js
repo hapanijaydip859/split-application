@@ -8,6 +8,4 @@ const settlementSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-
-const Settlement = mongoose.model("Settlement", settlementSchema);
-export default Settlement;
+export default mongoose.model("Settlement", settlementSchema);

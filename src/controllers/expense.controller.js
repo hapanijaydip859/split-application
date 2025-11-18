@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import Expense from "../models/Expense.js";
 import Group from "../models/Group.js";
 import Settlement from "../models/Settlement.js";
+import { date } from "zod";
 
 // export const addExpense = async (req, res) => {
 //   try {
@@ -460,6 +461,9 @@ export const getMyPaidExpenses = async (req, res) => {
     const expenses = await Expense.find({ paidBy: userId })
       .populate("group")
       .populate("paidBy");   // THIS IS CORRECT
+      console.log("expense" , expenses);
+      
+      if(expenses.length == []){return res.status(402).json("Not expense found")}
 
     return res.json({
       message: "My paid expenses fetched",
@@ -475,6 +479,105 @@ export const getMyPaidExpenses = async (req, res) => {
     });
   }
 };
+
+export const getOverallSummary = async (req, res) => {
+  try {
+    const userId = req.user._id.toString();
+
+    const expenses = await Expense.find({
+      "splitDetails.user": userId
+    })
+      .populate("splitDetails.user")
+      .populate("splitDetails.relatedUsers");
+
+    let totalLent = 0;
+    let totalOwes = 0;
+    let breakdown = {};
+
+    for (const exp of expenses) {
+      for (const sd of exp.splitDetails) {
+        const thisUser = sd.user._id.toString();
+        const amount = sd.amount;
+
+        // --------------------------
+        // 🟢 USER LENT (others owe me)
+        // --------------------------
+        if (sd.type === "lent" && thisUser === userId) {
+          const perUser = amount / sd.relatedUsers.length; // 600/2 = 300
+
+          // total lent add ONLY ONCE
+          totalLent += amount;
+
+          sd.relatedUsers.forEach((ru) => {
+            const uid = ru._id.toString();
+
+            if (!breakdown[uid]) {
+              breakdown[uid] = { user: ru, lent: 0, owes: 0 };
+            }
+
+            breakdown[uid].lent += perUser; // 300 each
+          });
+        }
+        // --------------------------
+        // 🔴 USER OWES (I owe someone)
+        // --------------------------
+        if (sd.type === "owes" && thisUser === userId) {
+          const ru = sd.relatedUsers[0]; // only one 
+          const uid = ru._id.toString();
+
+          totalOwes += amount;
+
+          if (!breakdown[uid]) {
+            breakdown[uid] = { user: ru, lent: 0, owes: 0 };
+          }
+
+          breakdown[uid].owes += amount; // full 300
+        }
+      }
+    }
+
+    // --------------------------
+    // Final formatting
+    // --------------------------
+    const finalBreakdown = Object.values(breakdown).map((b) => {
+      const net = b.lent - b.owes;
+
+      return {
+        user: b.user,
+        amount: Math.abs(net),
+        status: net > 0 ? "owes you" : net < 0 ? "you owe" : "settled",
+        color: net > 0 ? "green" : net < 0 ? "red" : "gray"
+      };
+    });
+
+    res.json({
+      message: "Overall summary calculated",
+      overall: {
+        totalYouLent: totalLent,
+        totalYouOwe: totalOwes,
+        finalBalance: totalLent - totalOwes
+      },
+      breakdown: finalBreakdown
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to calculate summary",
+      error: error.message
+    });
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
 
 
 

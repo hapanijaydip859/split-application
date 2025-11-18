@@ -1,5 +1,5 @@
 import express from "express";
-import { addExpense, getMyExpenses, getMyPaidExpenses } from "../controllers/expense.controller.js";
+import { addExpense, getMyExpenses, getMyPaidExpenses, getOverallSummary } from "../controllers/expense.controller.js";
 import { requireAuth } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
@@ -8,6 +8,8 @@ const router = express.Router();
 router.post("/:groupId/expenses", requireAuth, addExpense);
 router.get("/:groupId/balance-summary", requireAuth, getMyExpenses);
 router.get("/:groupId/balance-summary-pay", requireAuth, getMyPaidExpenses);
+router.get("/:groupId/overall-summary", requireAuth, getOverallSummary);
+
 
 
 export const expenseRoutes = router;
