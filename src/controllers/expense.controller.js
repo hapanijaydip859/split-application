@@ -709,23 +709,82 @@ export const getOverallSummary = async (req, res) => {
 
 
 
+// export const getExpenseHistory = async (req, res) => {
+//   try {
+//     const { groupId } = req.params;
+//     const userId = String(req.user._id);
+
+//     // 🔹 1️⃣ Group exists?
+//     const group = await Group.findById(groupId).populate("members.user", "name");
+//     if (!group) return res.status(404).json({ message: "Group not found" });
+
+//     // 🔹 2️⃣ Check: user belongs to group?
+//     const allMembers = group.members.map((m) => String(m.user._id));
+
+//     if (!allMembers.includes(userId)) {
+//       return res.status(403).json({ message: "You're not a member of this group" });
+//     }
+
+//     // 🔹 3️⃣ Fetch all expenses in this group
+//     const expenses = await Expense.find({ group: groupId })
+//       .populate("paidBy", "name")
+//       .populate("splitDetails.user", "name")
+//       .sort({ createdAt: -1 });
+
+//     const history = [];
+
+//     expenses.forEach((exp) => {
+//       const payerId = String(exp.paidBy._id);
+
+//       // 🟢 Find splitDetails of logged-in user
+//       const mySplit = exp.splitDetails.find(
+//         (sd) => String(sd.user._id) === userId
+//       );
+
+//       let entry = {
+//         description: exp.description,
+//         paidBy: payerId === userId ? "You" : exp.paidBy.name,
+//       };
+
+//       if (payerId === userId) {
+//         // 🟢 YOU PAID
+//         entry.youPaid = exp.amount;
+
+//         if (mySplit) {
+//           entry.youLent = mySplit.amount; // total lent
+//         }
+//       } else {
+//         // 🔵 SOMEONE ELSE PAID
+//         if (mySplit && mySplit.type === "owes") {
+//           entry.youBorrowed = mySplit.amount;
+//         }
+//       }
+
+//       history.push(entry);
+//     });
+
+//     res.status(200).json({
+//       message: "Expense history fetched",
+//       data: history,
+//     });
+
+//   } catch (error) {
+//     console.error("❌ getExpenseHistory Error:", error.message);
+//     res.status(500).json({
+//       message: "Failed to load history",
+//       error: error.message,
+//     });
+//   }
+// };
+
 export const getExpenseHistory = async (req, res) => {
   try {
+    const userId = req.user._id.toString();
     const { groupId } = req.params;
-    const userId = String(req.user._id);
 
-    // 🔹 1️⃣ Group exists?
-    const group = await Group.findById(groupId).populate("members.user", "name");
-    if (!group) return res.status(404).json({ message: "Group not found" });
-
-    // 🔹 2️⃣ Check: user belongs to group?
-    const allMembers = group.members.map((m) => String(m.user._id));
-
-    if (!allMembers.includes(userId)) {
-      return res.status(403).json({ message: "You're not a member of this group" });
-    }
-
-    // 🔹 3️⃣ Fetch all expenses in this group
+    // ------------------------------
+    // 1️⃣ Fetch EXPENSE history
+    // ------------------------------
     const expenses = await Expense.find({ group: groupId })
       .populate("paidBy", "name")
       .populate("splitDetails.user", "name")
@@ -733,28 +792,25 @@ export const getExpenseHistory = async (req, res) => {
 
     const history = [];
 
-    expenses.forEach((exp) => {
-      const payerId = String(exp.paidBy._id);
+    expenses.forEach(exp => {
+      const payerId = exp.paidBy?._id?.toString();
 
-      // 🟢 Find splitDetails of logged-in user
+      // find current user's split detail
       const mySplit = exp.splitDetails.find(
-        (sd) => String(sd.user._id) === userId
+        sd => sd.user._id.toString() === userId
       );
 
       let entry = {
+        type: "expense",
         description: exp.description,
+        createdAt: exp.createdAt,
         paidBy: payerId === userId ? "You" : exp.paidBy.name,
       };
 
       if (payerId === userId) {
-        // 🟢 YOU PAID
         entry.youPaid = exp.amount;
-
-        if (mySplit) {
-          entry.youLent = mySplit.amount; // total lent
-        }
+        if (mySplit) entry.youLent = mySplit.amount;
       } else {
-        // 🔵 SOMEONE ELSE PAID
         if (mySplit && mySplit.type === "owes") {
           entry.youBorrowed = mySplit.amount;
         }
@@ -763,19 +819,56 @@ export const getExpenseHistory = async (req, res) => {
       history.push(entry);
     });
 
-    res.status(200).json({
-      message: "Expense history fetched",
-      data: history,
+    // ------------------------------
+    // 2️⃣ Fetch SETTLEMENT history
+    // ------------------------------
+    const settlements = await Settlement.find({ group: groupId })
+      .populate("fromUser", "name")
+      .populate("toUser", "name")
+      .sort({ createdAt: -1 });
+
+    settlements.forEach(s => {
+      const from = s.fromUser._id.toString();
+      const to = s.toUser._id.toString();
+
+      let entry = {
+        type: "settlement",
+        createdAt: s.createdAt,
+        amount: s.amount,
+      };
+
+      if (from === userId) {
+        // You paid someone
+        entry.description = `You paid ${s.toUser.name}`;
+      } else if (to === userId) {
+        // Someone paid you
+        entry.description = `${s.fromUser.name} paid you`;
+      } else {
+        // irrelevant settlement
+        return;
+      }
+
+      history.push(entry);
+    });
+
+    // ------------------------------
+    // 3️⃣ Sort both together
+    // ------------------------------
+    history.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    res.json({
+      message: "Expense + Settlement History",
+      data: history
     });
 
   } catch (error) {
-    console.error("❌ getExpenseHistory Error:", error.message);
     res.status(500).json({
-      message: "Failed to load history",
-      error: error.message,
+      message: "Failed to fetch history",
+      error: error.message
     });
   }
 };
+
 
 export const getSettleUpSummary = async (req, res) => {
   try {
