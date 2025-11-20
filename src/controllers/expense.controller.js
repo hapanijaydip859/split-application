@@ -461,9 +461,9 @@ export const getMyPaidExpenses = async (req, res) => {
     const expenses = await Expense.find({ paidBy: userId })
       .populate("group")
       .populate("paidBy");   // THIS IS CORRECT
-      console.log("expense" , expenses);
-      
-      if(expenses.length == []){return res.status(402).json("Not expense found")}
+    console.log("expense", expenses);
+
+    if (expenses.length == []) { return res.status(402).json("Not expense found") }
 
     return res.json({
       message: "My paid expenses fetched",
@@ -946,60 +946,172 @@ export const getSettleUpSummary = async (req, res) => {
 };
 
 
-export const deleteExpense = async (req, res) => {
+// export const deleteExpense = async (req, res) => {
+//   try {
+//     const { groupId, expenseId } = req.params;
+//     const userId = req.user._id.toString();
+
+//     // 1️⃣ Find expense
+//     const expense = await Expense.findById(expenseId);
+//     if (!expense) {
+//       return res.status(404).json({ message: "Expense not found" });
+//     }
+
+//     // 2️⃣ Check group match
+//     if (expense.group.toString() !== groupId) {
+//       return res.status(400).json({ message: "Expense does not belong to this group" });
+//     }
+
+//     // 3️⃣ Check group exists
+//     const group = await Group.findById(groupId);
+//     if (!group) {
+//       return res.status(404).json({ message: "Group not found" });
+//     }
+
+//     // 4️⃣ Check if user is member of group
+//     const isMember = group.members.some((m) => m.user.toString() === userId);
+//     if (!isMember) {
+//       return res.status(403).json({ message: "You are not a member of this group" });
+//     }
+
+//     // 5️⃣ Only creator or payer can delete
+//     if (
+//       expense.createdBy?.toString() !== userId &&
+//       expense.paidBy?.toString() !== userId
+//     ) {
+//       return res.status(403).json({
+//         message: "You are not allowed to delete this expense",
+//       });
+//     }
+
+//     // 6️⃣ Delete the expense
+//     await Expense.findByIdAndDelete(expenseId);
+
+//     res.json({
+//       message: "Expense deleted successfully",
+//       deletedExpenseId: expenseId,
+//     });
+//   } catch (error) {
+//     console.error("❌ deleteExpense error:", error);
+//     res.status(500).json({
+//       message: "Failed to delete expense",
+//       error: error.message,
+//     });
+//   }
+// };
+
+export const deleteItem = async (req, res) => {
   try {
-    const { groupId, expenseId } = req.params;
+    const { groupId, itemId } = req.params;
     const userId = req.user._id.toString();
 
-    // 1️⃣ Find expense
-    const expense = await Expense.findById(expenseId);
-    if (!expense) {
-      return res.status(404).json({ message: "Expense not found" });
-    }
+    // ---------------------------------------------------------
+    // 1️⃣ Check if ID belongs to EXPENSE
+    // ---------------------------------------------------------
+    let expense = await Expense.findById(itemId);
 
-    // 2️⃣ Check group match
-    if (expense.group.toString() !== groupId) {
-      return res.status(400).json({ message: "Expense does not belong to this group" });
-    }
+    if (expense) {
+      // Confirm belongs to same group
+      if (expense.group.toString() !== groupId) {
+        return res.status(400).json({ message: "Expense not in this group" });
+      }
 
-    // 3️⃣ Check group exists
-    const group = await Group.findById(groupId);
-    if (!group) {
-      return res.status(404).json({ message: "Group not found" });
-    }
+      // User must be member
+      const group = await Group.findById(groupId);
+      const isMember = group.members.some((m) => m.user.toString() === userId);
+      if (!isMember) {
+        return res.status(403).json({ message: "Not a group member" });
+      }
 
-    // 4️⃣ Check if user is member of group
-    const isMember = group.members.some((m) => m.user.toString() === userId);
-    if (!isMember) {
-      return res.status(403).json({ message: "You are not a member of this group" });
-    }
+      // Only payer or creator can delete
+      if (
+        expense.createdBy?.toString() !== userId &&
+        expense.paidBy?.toString() !== userId
+      ) {
+        return res.status(403).json({
+          message: "You cannot delete this expense",
+        });
+      }
 
-    // 5️⃣ Only creator or payer can delete
-    if (
-      expense.createdBy?.toString() !== userId &&
-      expense.paidBy?.toString() !== userId
-    ) {
-      return res.status(403).json({
-        message: "You are not allowed to delete this expense",
+      // Delete related settlements
+      const relatedUsers = expense.splitDetails.map((sd) =>
+        sd.user.toString()
+      );
+      const payerId = expense.paidBy.toString();
+
+      const settlementDelete = await Settlement.deleteMany({
+        group: groupId,
+        $or: [
+          { fromUser: payerId, toUser: { $in: relatedUsers } },
+          { fromUser: { $in: relatedUsers }, toUser: payerId },
+        ],
+      });
+
+      // Delete expense
+      await Expense.findByIdAndDelete(itemId);
+
+      return res.json({
+        message: "Expense deleted successfully",
+        settlementsDeleted: settlementDelete.deletedCount,
+        deletedItemId: itemId,
+        type: "expense",
       });
     }
 
-    // 6️⃣ Delete the expense
-    await Expense.findByIdAndDelete(expenseId);
+    // ---------------------------------------------------------
+    // 2️⃣ NOT EXPENSE → Check if ID belongs to SETTLEMENT
+    // ---------------------------------------------------------
+    let settlement = await Settlement.findById(itemId);
 
-    res.json({
-      message: "Expense deleted successfully",
-      deletedExpenseId: expenseId,
+    if (settlement) {
+      // Check group match
+      if (settlement.group.toString() !== groupId) {
+        return res.status(400).json({ message: "Settlement not in this group" });
+      }
+
+      // Check group membership
+      const group = await Group.findById(groupId);
+      const isMember = group.members.some((m) => m.user.toString() === userId);
+      if (!isMember) {
+        return res.status(403).json({
+          message: "Not a group member",
+        });
+      }
+
+      // Only fromUser OR toUser can delete
+      if (
+        settlement.fromUser.toString() !== userId &&
+        settlement.toUser.toString() !== userId
+      ) {
+        return res.status(403).json({
+          message: "You cannot delete this settlement",
+        });
+      }
+
+      await Settlement.findByIdAndDelete(itemId);
+
+      return res.json({
+        message: "Settlement deleted successfully",
+        deletedItemId: itemId,
+        type: "settlement",
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 3️⃣ ID is neither expense nor settlement
+    // ---------------------------------------------------------
+    return res.status(404).json({
+      message: "No expense/settlement found for this ID",
     });
-  } catch (error) {
-    console.error("❌ deleteExpense error:", error);
-    res.status(500).json({
-      message: "Failed to delete expense",
-      error: error.message,
+
+  } catch (err) {
+    console.error("❌ deleteItem error:", err);
+    return res.status(500).json({
+      message: "Failed to delete",
+      error: err.message,
     });
   }
 };
-
 
 
 
