@@ -782,29 +782,30 @@ export const getExpenseHistory = async (req, res) => {
     const userId = req.user._id.toString();
     const { groupId } = req.params;
 
+    const history = [];
+
     // ------------------------------
-    // 1️⃣ Fetch EXPENSE history
+    // 1️⃣ EXPENSE HISTORY
     // ------------------------------
     const expenses = await Expense.find({ group: groupId })
       .populate("paidBy", "name")
       .populate("splitDetails.user", "name")
       .sort({ createdAt: -1 });
 
-    const history = [];
-
     expenses.forEach(exp => {
       const payerId = exp.paidBy?._id?.toString();
 
-      // find current user's split detail
       const mySplit = exp.splitDetails.find(
         sd => sd.user._id.toString() === userId
       );
 
       let entry = {
+        _id: exp._id,                   // ADD THIS
         type: "expense",
         description: exp.description,
         createdAt: exp.createdAt,
         paidBy: payerId === userId ? "You" : exp.paidBy.name,
+        amount: exp.amount              // optional but useful
       };
 
       if (payerId === userId) {
@@ -820,7 +821,7 @@ export const getExpenseHistory = async (req, res) => {
     });
 
     // ------------------------------
-    // 2️⃣ Fetch SETTLEMENT history
+    // 2️⃣ SETTLEMENT HISTORY
     // ------------------------------
     const settlements = await Settlement.find({ group: groupId })
       .populate("fromUser", "name")
@@ -832,19 +833,17 @@ export const getExpenseHistory = async (req, res) => {
       const to = s.toUser._id.toString();
 
       let entry = {
+        _id: s._id,                    // ADD THIS
         type: "settlement",
         createdAt: s.createdAt,
-        amount: s.amount,
+        amount: s.amount
       };
 
       if (from === userId) {
-        // You paid someone
         entry.description = `You paid ${s.toUser.name}`;
       } else if (to === userId) {
-        // Someone paid you
         entry.description = `${s.fromUser.name} paid you`;
       } else {
-        // irrelevant settlement
         return;
       }
 
@@ -852,7 +851,7 @@ export const getExpenseHistory = async (req, res) => {
     });
 
     // ------------------------------
-    // 3️⃣ Sort both together
+    // 3️⃣ SORT BY DATE (NEWEST FIRST)
     // ------------------------------
     history.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
@@ -868,6 +867,7 @@ export const getExpenseHistory = async (req, res) => {
     });
   }
 };
+
 
 
 export const getSettleUpSummary = async (req, res) => {
