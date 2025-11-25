@@ -12,141 +12,109 @@ import User from "../models/User.js";
   
 export const getSettleSummary = async (req, res) => {
   try {
+    console.log("hello ");
+    
     const { groupId } = req.params;
     const userId = req.user._id.toString();
 
-    if (!mongoose.Types.ObjectId.isValid(groupId)) {
-      return res.status(400).json({ message: "Invalid groupId" });
-    }
-
-    // 1) load group and ensure membership
+    // Load group
     const group = await Group.findById(groupId).populate("members.user", "name email");
     if (!group) return res.status(404).json({ message: "Group not found" });
 
-    if (!Array.isArray(group.members) || !group.members.some(m => String(m.user._id) === userId)) {
+    const members = group.members.map(m => m.user._id.toString());
+
+    if (!members.includes(userId)) {
       return res.status(403).json({ message: "You are not a member of this group" });
     }
 
-    // 2) load group expenses
-    const expenses = await Expense.find({ group: groupId })
-      .populate("paidBy", "name email")
-      .populate("splitDetails.user", "name email")
-      .populate("splitDetails.relatedUsers", "name email");
-
-    if (!expenses.length) {
-      return res.status(200).json({
-        message: "No expenses found",
-        group: { _id: group._id, name: group.name },
-        data: []
+    // ---------------------------------------------------------
+    // 1️⃣ BUILD RAW MATRIX : matrix[A][B] = A owes B
+    // ---------------------------------------------------------
+    const matrix = {};
+    members.forEach(a => {
+      matrix[a] = {};
+      members.forEach(b => {
+        if (a !== b) matrix[a][b] = 0;
       });
-    }
+    });
 
-    // 3) build debts map: debts[creditorId][debtorId] = amount (debtor owes creditor)
-    const debts = {}; // { creditorId: { debtorId: amt, ... }, ... }
-
-    const ensureCreditor = (cid) => {
-      if (!debts[cid]) debts[cid] = {};
-    };
+    const expenses = await Expense.find({ group: groupId });
 
     expenses.forEach(exp => {
-      // derive included members from splitDetails if possible
-      let includedSet = new Set();
+      exp.splitDetails.forEach(sd => {
+        const user = sd.user.toString();
 
-      if (Array.isArray(exp.splitDetails) && exp.splitDetails.length > 0) {
-        exp.splitDetails.forEach(sd => {
-          if (sd.user && sd.user._id) includedSet.add(sd.user._id.toString());
-          // sometimes relatedUsers may include someone not in user rows; include them too
-          if (Array.isArray(sd.relatedUsers)) {
-            sd.relatedUsers.forEach(r => { if (r && r._id) includedSet.add(r._id.toString()); });
-          }
-        });
-      }
-
-      // fallback to includedMembers field if present on expense
-      if ((!includedSet || includedSet.size === 0) && Array.isArray(exp.includedMembers) && exp.includedMembers.length > 0) {
-        exp.includedMembers.forEach(id => includedSet.add(String(id)));
-      }
-
-      // if still empty, skip this expense
-      if (!includedSet || includedSet.size === 0) return;
-
-      const includedArr = Array.from(includedSet);
-      const includedCount = includedArr.length;
-      if (includedCount === 0) return;
-
-      const perHead = Number(exp.amount) / includedCount;
-      const payerId = exp.paidBy?._id ? exp.paidBy._id.toString() : String(exp.paidBy);
-
-      // For every included member except payer, that member owes `perHead` to payer
-      includedArr.forEach(memberId => {
-        if (memberId === payerId) return; // skip payer
-        ensureCreditor(payerId);
-        debts[payerId][memberId] = (debts[payerId][memberId] || 0) + perHead;
+        if (sd.type === "owes") {
+          const payer = sd.relatedUsers[0].toString();
+          matrix[user][payer] += sd.amount; 
+        }
       });
     });
 
-    // 4) Build summary for logged-in user
-    // If user is creditor -> others owe user (show them)
-    // If user is debtor in someone's map -> user owes that someone (show them)
-    const summaryMap = {}; // otherUserId -> net (positive means other owes you, negative means you owe other)
+    // ---------------------------------------------------------
+    // 2️⃣ APPLY SETTLEMENTS (A paid B)
+    // ---------------------------------------------------------
+    const settlements = await Settlement.find({ group: groupId });
 
-    // creditor side (others owe logged user)
-    if (debts[userId]) {
-      Object.entries(debts[userId]).forEach(([debtorId, amt]) => {
-        summaryMap[debtorId] = (summaryMap[debtorId] || 0) + amt; // other owes you amt
-      });
-    }
+    settlements.forEach(s => {
+      const from = s.fromUser.toString();
+      const to = s.toUser.toString();
+      matrix[from][to] -= Number(s.amount);
 
-    // debtor side (logged user owes other)
-    Object.entries(debts).forEach(([creditorId, debtorsObj]) => {
-      if (creditorId === userId) return; // already handled
-      if (debtorsObj[userId]) {
-        // user owes creditorId
-        summaryMap[creditorId] = (summaryMap[creditorId] || 0) - debtorsObj[userId];
+      if (matrix[from][to] < 0) matrix[from][to] = 0;
+    });
+
+    // ---------------------------------------------------------
+    // 3️⃣ NET MATRIX : net[A][B] = B owes A
+    // ---------------------------------------------------------
+    const netMap = {}; // net for logged user only
+
+    members.forEach(other => {
+      if (other === userId) return;
+
+      const youOwe = matrix[userId][other];     // you → other
+      const theyOwe = matrix[other][userId];    // other → you
+      const net = theyOwe - youOwe;
+
+      if (net > 0) {
+        netMap[other] = { status: "you are owed", amount: net };
+      } else if (net < 0) {
+        netMap[other] = { status: "you owe", amount: Math.abs(net) };
       }
     });
 
-    // 5) prepare final list with user info (use group members data to avoid extra DB calls)
-    const final = [];
-    const memberMap = {};
-    group.members.forEach(m => {
-      memberMap[String(m.user._id)] = { _id: m.user._id, name: m.user.name, email: m.user.email };
+    // ---------------------------------------------------------
+    // 4️⃣ FORMAT RESULT
+    // ---------------------------------------------------------
+    const final = Object.keys(netMap).map(otherId => {
+      const member = group.members.find(m => m.user._id.toString() === otherId);
+      return {
+        userId: otherId,
+        name: member.user.name,
+        status: netMap[otherId].status,
+        amount: Number(netMap[otherId].amount.toFixed(2))
+      };
     });
 
-    for (const otherId in summaryMap) {
-      const net = summaryMap[otherId];
-      if (net === 0) continue;
-
-      let userInfo = memberMap[otherId];
-      if (!userInfo) {
-        // fallback DB fetch if not found in group members
-        const u = await User.findById(otherId).select("name email");
-        if (u) userInfo = u;
-      }
-
-      if (!userInfo) continue;
-
-      final.push({
-        user: userInfo,
-        amount: Math.round(Math.abs(net) * 100) / 100, // round to 2 decimals
-        status: net > 0 ? "you are owed" : "you owe"
-      });
-    }
-
-    // Optional: sort descending by amount
-    final.sort((a, b) => b.amount - a.amount);
-
-    return res.status(200).json({
-      message: "Settlement summary generated",
-      group: { _id: group._id, name: group.name },
+    res.json({
+      message: "Settle-up summary",
       data: final
     });
 
   } catch (err) {
-    console.error("getSettleSummary error:", err);
-    return res.status(500).json({ message: "Failed to fetch settle summary", error: err.message });
+    console.error("getSettleSummary ERROR:", err);
+    res.status(500).json({ message: "Failed", error: err.message });
   }
 };
+
+
+
+
+
+
+
+
+
 
 //   try {
 //     const { groupId } = req.params;
