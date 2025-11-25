@@ -85,99 +85,99 @@ import { date } from "zod";
 //   }
 // };
 
-export const addExpense = async (req, res) => {
-  try {
-    const { groupId } = req.params;
-    const { description, amount, paidBy, excludedMembers = [] } = req.body;
-    const createdBy = req.user._id; // token user
+// export const addExpense = async (req, res) => {
+//   try {
+//     const { groupId } = req.params;
+//     const { description, amount, paidBy, excludedMembers = [] } = req.body;
+//     const createdBy = req.user._id; // token user
 
-    if (!description || !amount || !paidBy)
-      return res.status(400).json({ message: "Missing required fields" });
+//     if (!description || !amount || !paidBy)
+//       return res.status(400).json({ message: "Missing required fields" });
 
-    // 🔹 1️⃣ Find group & members
-    const group = await Group.findById(groupId).populate("members.user", "name email");
-    if (!group) return res.status(404).json({ message: "Group not found" });
+//     // 🔹 1️⃣ Find group & members
+//     const group = await Group.findById(groupId).populate("members.user", "name email");
+//     if (!group) return res.status(404).json({ message: "Group not found" });
 
-    const allMembers = group.members.map((m) => String(m.user._id));
+//     const allMembers = group.members.map((m) => String(m.user._id));
 
-    // 🧠 Check: createdBy (logged-in user) must be part of group
-    if (!allMembers.includes(String(createdBy))) {
-      return res.status(403).json({
-        message: "You are not a member of this group",
-      });
-    }
+//     // 🧠 Check: createdBy (logged-in user) must be part of group
+//     if (!allMembers.includes(String(createdBy))) {
+//       return res.status(403).json({
+//         message: "You are not a member of this group",
+//       });
+//     }
 
-    // 🧠 Check: paidBy must be part of this group
-    if (!allMembers.includes(String(paidBy))) {
-      return res.status(403).json({
-        message: "Payer is not a member of this group",
-      });
-    }
+//     // 🧠 Check: paidBy must be part of this group
+//     if (!allMembers.includes(String(paidBy))) {
+//       return res.status(403).json({
+//         message: "Payer is not a member of this group",
+//       });
+//     }
 
-    // 🔹 2️⃣ Filter included members (exclude those in excludedMembers)
-    const includedMembers = allMembers.filter(
-      (id) => !excludedMembers.includes(String(id))
-    );
+//     // 🔹 2️⃣ Filter included members (exclude those in excludedMembers)
+//     const includedMembers = allMembers.filter(
+//       (id) => !excludedMembers.includes(String(id))
+//     );
 
-    if (includedMembers.length < 2)
-      return res
-        .status(400)
-        .json({ message: "At least 2 members required for expense" });
+//     if (includedMembers.length < 2)
+//       return res
+//         .status(400)
+//         .json({ message: "At least 2 members required for expense" });
 
-    const total = Number(amount);
-    const perHead = total / includedMembers.length;
-    const payer = String(paidBy);
+//     const total = Number(amount);
+//     const perHead = total / includedMembers.length;
+//     const payer = String(paidBy);
 
-    const splitDetails = [];
+//     const splitDetails = [];
 
-    // 🔹 3️⃣ Payer lent amount = total - (his own share if included)
-    const payerIncluded = includedMembers.includes(payer);
-    const payerLent = payerIncluded ? total - perHead : total;
+//     // 🔹 3️⃣ Payer lent amount = total - (his own share if included)
+//     const payerIncluded = includedMembers.includes(payer);
+//     const payerLent = payerIncluded ? total - perHead : total;
 
-    if (payerLent > 0) {
-      const owesUsers = includedMembers.filter((id) => id !== payer);
+//     if (payerLent > 0) {
+//       const owesUsers = includedMembers.filter((id) => id !== payer);
 
-      splitDetails.push({
-        user: new mongoose.Types.ObjectId(payer),
-        type: "lent",
-        amount: +payerLent.toFixed(2),
-        relatedUsers: owesUsers.map((id) => new mongoose.Types.ObjectId(id)),
-      });
+//       splitDetails.push({
+//         user: new mongoose.Types.ObjectId(payer),
+//         type: "lent",
+//         amount: +payerLent.toFixed(2),
+//         relatedUsers: owesUsers.map((id) => new mongoose.Types.ObjectId(id)),
+//       });
 
-      // 🔹 4️⃣ For each owe user
-      owesUsers.forEach((uid) => {
-        splitDetails.push({
-          user: new mongoose.Types.ObjectId(uid),
-          type: "owes",
-          amount: +perHead.toFixed(2),
-          relatedUsers: [new mongoose.Types.ObjectId(payer)],
-        });
-      });
-    }
+//       // 🔹 4️⃣ For each owe user
+//       owesUsers.forEach((uid) => {
+//         splitDetails.push({
+//           user: new mongoose.Types.ObjectId(uid),
+//           type: "owes",
+//           amount: +perHead.toFixed(2),
+//           relatedUsers: [new mongoose.Types.ObjectId(payer)],
+//         });
+//       });
+//     }
 
-    // 🔹 5️⃣ Save expense
-    const expense = await Expense.create({
-      group: groupId,
-      description,
-      amount: total,
-      splitType: "equal",
-      paidBy: new mongoose.Types.ObjectId(paidBy),
-      splitDetails,
-      createdBy,
-    });
+//     // 🔹 5️⃣ Save expense
+//     const expense = await Expense.create({
+//       group: groupId,
+//       description,
+//       amount: total,
+//       splitType: "equal",
+//       paidBy: new mongoose.Types.ObjectId(paidBy),
+//       splitDetails,
+//       createdBy,
+//     });
 
-    res.status(201).json({
-      message: "Expense added successfully",
-      data: expense,
-    });
-  } catch (error) {
-    console.error("❌ addExpense Error:", error.message);
-    res.status(500).json({
-      message: "Failed to add expense",
-      error: error.message,
-    });
-  }
-};
+//     res.status(201).json({
+//       message: "Expense added successfully",
+//       data: expense,
+//     });
+//   } catch (error) {
+//     console.error("❌ addExpense Error:", error.message);
+//     res.status(500).json({
+//       message: "Failed to add expense",
+//       error: error.message,
+//     });
+//   }
+// };
 
 // export const getMyExpenses = async (req, res) => {
 //   try {
@@ -382,6 +382,115 @@ export const addExpense = async (req, res) => {
 // };
 
 
+export const addExpense = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { description, amount, paidBy, excludedMembers = [] } = req.body;
+    const createdBy = req.user._id.toString();
+
+    if (!description || !amount || !paidBy) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // 1️⃣ Fetch Group
+    const group = await Group.findById(groupId).populate("members.user", "name");
+    if (!group) {
+      return res.status(404).json({ message: "Group not found" });
+    }
+
+    const allMembers = group.members.map((m) => String(m.user._id));
+
+    // 2️⃣ User must be member
+    if (!allMembers.includes(createdBy)) {
+      return res.status(403).json({ message: "You are not a member of this group" });
+    }
+
+    // 3️⃣ Payer must be member
+    if (!allMembers.includes(String(paidBy))) {
+      return res.status(403).json({ message: "Payer is not a member of this group" });
+    }
+
+    // 4️⃣ Calculate included users
+    const includedMembers = allMembers.filter(
+      (id) => !excludedMembers.includes(String(id))
+    );
+
+    const payer = String(paidBy);
+    const payerIncluded = includedMembers.includes(payer);
+
+    // 🚨 RULE 1 — If ALL excluded → no members left
+    if (includedMembers.length === 0) {
+      return res.status(400).json({
+        message: "At least 1 member required for expense"
+      });
+    }
+
+    // 🚨 RULE 2 — Self expense allowed
+    if (payerIncluded && includedMembers.length === 1) {
+      // Valid self expense → allow
+    }
+
+    // 🚨 RULE 3 — Payer NOT included → need at least 1 member
+    else if (!payerIncluded && includedMembers.length < 1) {
+      return res.status(400).json({
+        message: "At least 1 member required for expense"
+      });
+    }
+
+    // ❗ NOTICE: Shared expense minimum 2 rule REMOVED COMPLETELY
+
+    // 5️⃣ Split calculation
+    const total = Number(amount);
+    const perHead = total / includedMembers.length;
+
+    const splitDetails = [];
+
+    const payerLent = payerIncluded ? total - perHead : total;
+
+    if (payerLent > 0) {
+      const owesUsers = includedMembers.filter((id) => id !== payer);
+
+      splitDetails.push({
+        user: payer,
+        type: "lent",
+        amount: +payerLent.toFixed(2),
+        relatedUsers: owesUsers,
+      });
+
+      owesUsers.forEach((uid) => {
+        splitDetails.push({
+          user: uid,
+          type: "owes",
+          amount: +perHead.toFixed(2),
+          relatedUsers: [payer],
+        });
+      });
+    }
+
+    // 6️⃣ Save expense
+    const expense = await Expense.create({
+      group: groupId,
+      description,
+      amount: total,
+      splitType: "equal",
+      paidBy,
+      splitDetails,
+      createdBy,
+    });
+
+    return res.status(201).json({
+      message: "Expense added successfully",
+      data: expense,
+    });
+
+  } catch (error) {
+    console.error("❌ addExpense Error:", error);
+    return res.status(500).json({
+      message: "Failed to add expense",
+      error: error.message,
+    });
+  }
+};
 
 export const getMyExpenses = async (req, res) => {
   try {
