@@ -9,7 +9,12 @@ const passwordRegex =
 // ---------------- SIGNUP ----------------
 export const signup = async (req, res) => {
   try {
-    const { name, mo, email, password } = req.body;
+    let { name, mo, email, password } = req.body;
+
+    // 🆕 Clean input
+    name = name?.trim();
+    mo = mo?.toString().trim();
+    email = email?.toLowerCase().trim();
 
     const requiredFields = { name, mo, email, password };
 
@@ -18,6 +23,11 @@ export const signup = async (req, res) => {
         return res.status(400).json({ message: `${key} is required` });
       }
     }
+
+    if (!/^[0-9]{10}$/.test(mo)) {
+      return res.status(400).json({ message: "Mobile number must be 10 digits" });
+    }
+
     if (!passwordRegex.test(password)) {
       return res.status(400).json({
         message:
@@ -25,17 +35,21 @@ export const signup = async (req, res) => {
       });
     }
 
+    // Check existing user
     const existingUser = await User.findOne({
       $or: [{ email }, { mo }],
     });
+
     if (existingUser) {
       return res.status(400).json({
         message: "Email or Mobile number already registered",
       });
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Create user
     const user = await User.create({
       name,
       mo,
@@ -43,7 +57,7 @@ export const signup = async (req, res) => {
       password: hashedPassword,
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "User registered successfully",
       user: {
@@ -53,10 +67,21 @@ export const signup = async (req, res) => {
         email: user.email,
       },
     });
+
   } catch (error) {
-    res.status(500).json({ message: "Signup failed", error: error.message });
+    // 🆕 Handle Mongo duplicate key (unique email/mo)
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+      return res.status(400).json({
+        message: `${field} is already registered`,
+      });
+    }
+
+    return res.status(500).json({ message: "Signup failed", error: error.message });
   }
 };
+
+
 
 // ---------------- LOGIN ----------------
 export const login = async (req, res) => {
