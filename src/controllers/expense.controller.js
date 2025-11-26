@@ -903,27 +903,40 @@ export const getExpenseHistory = async (req, res) => {
 
     expenses.forEach(exp => {
       const payerId = exp.paidBy?._id?.toString();
-
       const mySplit = exp.splitDetails.find(
         sd => sd.user._id.toString() === userId
       );
 
+      // 🆕 NEW: splitDetails EMPTY → NO BALANCE
+      const isNoBalance = exp.splitDetails.length === 0;
+
       let entry = {
-        _id: exp._id,                   // ADD THIS
+        _id: exp._id,
         type: "expense",
         description: exp.description,
         createdAt: exp.createdAt,
+        amount: exp.amount,
         paidBy: payerId === userId ? "You" : exp.paidBy.name,
-        amount: exp.amount              // optional but useful
       };
 
+      if (isNoBalance) {
+        // 🆕 PERSONAL or NO BALANCE EXPENSE
+        entry.message = "No balance";
+        history.push(entry);
+        return; // STOP further logic for this expense
+      }
+
+      // 🔵 If YOU PAID
       if (payerId === userId) {
         entry.youPaid = exp.amount;
-        if (mySplit) entry.youLent = mySplit.amount;
-      } else {
-        if (mySplit && mySplit.type === "owes") {
-          entry.youBorrowed = mySplit.amount;
+        if (mySplit) {
+          entry.youLent = mySplit.amount;
         }
+      }
+
+      // 🔴 If SOMEONE ELSE PAID AND YOU OWE
+      else if (mySplit && mySplit.type === "owes") {
+        entry.youBorrowed = mySplit.amount;
       }
 
       history.push(entry);
@@ -942,7 +955,7 @@ export const getExpenseHistory = async (req, res) => {
       const to = s.toUser._id.toString();
 
       let entry = {
-        _id: s._id,                    // ADD THIS
+        _id: s._id,
         type: "settlement",
         createdAt: s.createdAt,
         amount: s.amount
@@ -950,32 +963,36 @@ export const getExpenseHistory = async (req, res) => {
 
       if (from === userId) {
         entry.description = `You paid ${s.toUser.name}`;
-      } else if (to === userId) {
+      } 
+      else if (to === userId) {
         entry.description = `${s.fromUser.name} paid you`;
-      } else {
-        return;
+      } 
+      else {
+        return; // irrelevant settlement for this user
       }
 
       history.push(entry);
     });
 
     // ------------------------------
-    // 3️⃣ SORT BY DATE (NEWEST FIRST)
+    // 3️⃣ SORT BOTH HISTORY LISTS
     // ------------------------------
     history.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    res.json({
+    return res.json({
       message: "Expense + Settlement History",
       data: history
     });
 
   } catch (error) {
-    res.status(500).json({
+    console.error("getExpenseHistory error:", error);
+    return res.status(500).json({
       message: "Failed to fetch history",
       error: error.message
     });
   }
 };
+
 
 
 

@@ -12,108 +12,137 @@ import User from "../models/User.js";
   
 export const getSettleSummary = async (req, res) => {
   try {
-    console.log("hello ");
-    
     const { groupId } = req.params;
     const userId = req.user._id.toString();
 
-    // Load group
-    const group = await Group.findById(groupId).populate("members.user", "name email");
-    if (!group) return res.status(404).json({ message: "Group not found" });
-
-    const members = group.members.map(m => m.user._id.toString());
-
-    if (!members.includes(userId)) {
-      return res.status(403).json({ message: "You are not a member of this group" });
+    // 1️⃣ Group + members fetch
+    const group = await Group.findById(groupId).populate("members.user", "name");
+    if (!group) {
+      return res.status(404).json({ message: "Group not found" });
     }
 
-    // ---------------------------------------------------------
-    // 1️⃣ BUILD RAW MATRIX : matrix[A][B] = A owes B
-    // ---------------------------------------------------------
-    const matrix = {};
-    members.forEach(a => {
-      matrix[a] = {};
-      members.forEach(b => {
-        if (a !== b) matrix[a][b] = 0;
+    const members = group.members.map((m) => ({
+      id: m.user._id.toString(),
+      name: m.user.name,
+    }));
+
+    // 2️⃣ Balance matrix: balance[debtor][creditor] = amount owed
+    const balance = {};
+    members.forEach((a) => {
+      balance[a.id] = {};
+      members.forEach((b) => {
+        if (a.id !== b.id) balance[a.id][b.id] = 0;
       });
     });
 
+    // 3️⃣ Apply EXPENSES (only 'lent' rows)
     const expenses = await Expense.find({ group: groupId });
 
-    expenses.forEach(exp => {
-      exp.splitDetails.forEach(sd => {
-        const user = sd.user.toString();
+    expenses.forEach((exp) => {
+      exp.splitDetails.forEach((sd) => {
+        if (sd.type !== "lent") return;
 
-        if (sd.type === "owes") {
-          const payer = sd.relatedUsers[0].toString();
-          matrix[user][payer] += sd.amount; 
+        const creditor = sd.user.toString();               // payer / lent user
+        const related = sd.relatedUsers.map((u) => u.toString());
+
+        if (!related.length) return;
+
+        const perHead = sd.amount / related.length;
+
+        related.forEach((debtor) => {
+          balance[debtor][creditor] =
+            (balance[debtor][creditor] || 0) + perHead;
+        });
+      });
+    });
+
+    // 4️⃣ Apply SETTLEMENTS
+    // 👉 fromUser = creditor, toUser = debtor  (tame je rite use karo chho te mujab)
+    const settlements = await Settlement.find({ group: groupId });
+
+    settlements.forEach((s) => {
+      const creditor = s.fromUser.toString();
+      const debtor = s.toUser.toString();
+      const amt = Number(s.amount) || 0;
+
+      if (!balance[debtor]) balance[debtor] = {};
+      if (!balance[debtor][creditor]) balance[debtor][creditor] = 0;
+
+      balance[debtor][creditor] -= amt;
+
+      // negative avoid
+      if (balance[debtor][creditor] < 0) {
+        balance[debtor][creditor] = 0;
+      }
+    });
+
+    // 5️⃣ AUTO NETTING (A owes B & B owes A → net)
+    members.forEach((a) => {
+      members.forEach((b) => {
+        if (a.id === b.id) return;
+
+        const ab = balance[a.id][b.id] || 0; // a owes b
+        const ba = balance[b.id][a.id] || 0; // b owes a
+
+        if (ab > 0 && ba > 0) {
+          const net = Math.abs(ab - ba);
+
+          if (ab > ba) {
+            balance[a.id][b.id] = net;
+            balance[b.id][a.id] = 0;
+          } else {
+            balance[b.id][a.id] = net;
+            balance[a.id][b.id] = 0;
+          }
         }
       });
     });
 
-    // ---------------------------------------------------------
-    // 2️⃣ APPLY SETTLEMENTS (A paid B)
-    // ---------------------------------------------------------
-    const settlements = await Settlement.find({ group: groupId });
+    // 6️⃣ Build response for logged-in user
+    const result = [];
+    const EPS = 0.0001;
 
-    settlements.forEach(s => {
-      const from = s.fromUser.toString();
-      const to = s.toUser.toString();
-      matrix[from][to] -= Number(s.amount);
+    members.forEach((m) => {
+      if (m.id === userId) return;
 
-      if (matrix[from][to] < 0) matrix[from][to] = 0;
-    });
+      const youOwe = balance[userId][m.id] || 0;   // you -> them
+      const theyOwe = balance[m.id][userId] || 0;  // them -> you
 
-    // ---------------------------------------------------------
-    // 3️⃣ NET MATRIX : net[A][B] = B owes A
-    // ---------------------------------------------------------
-    const netMap = {}; // net for logged user only
-
-    members.forEach(other => {
-      if (other === userId) return;
-
-      const youOwe = matrix[userId][other];     // you → other
-      const theyOwe = matrix[other][userId];    // other → you
       const net = theyOwe - youOwe;
 
+      if (Math.abs(net) < EPS) return; // settled
+
       if (net > 0) {
-        netMap[other] = { status: "you are owed", amount: net };
-      } else if (net < 0) {
-        netMap[other] = { status: "you owe", amount: Math.abs(net) };
+        // They owe you
+        result.push({
+          userId: m.id,
+          name: m.name,
+          status: "you are owed",
+          amount: Math.round(net * 100) / 100,
+        });
+      } else {
+        // You owe them
+        result.push({
+          userId: m.id,
+          name: m.name,
+          status: "you owe",
+          amount: Math.round(Math.abs(net) * 100) / 100,
+        });
       }
     });
 
-    // ---------------------------------------------------------
-    // 4️⃣ FORMAT RESULT
-    // ---------------------------------------------------------
-    const final = Object.keys(netMap).map(otherId => {
-      const member = group.members.find(m => m.user._id.toString() === otherId);
-      return {
-        userId: otherId,
-        name: member.user.name,
-        status: netMap[otherId].status,
-        amount: Number(netMap[otherId].amount.toFixed(2))
-      };
-    });
-
-    res.json({
+    return res.status(200).json({
       message: "Settle-up summary",
-      data: final
+      data: result,
     });
-
   } catch (err) {
-    console.error("getSettleSummary ERROR:", err);
-    res.status(500).json({ message: "Failed", error: err.message });
+    console.error("❌ getSettleSummary error:", err);
+    return res.status(500).json({
+      message: "Failed to calculate settle summary",
+      error: err.message,
+    });
   }
 };
-
-
-
-
-
-
-
-
 
 
 //   try {
