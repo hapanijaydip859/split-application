@@ -590,6 +590,8 @@ export const getMyPaidExpenses = async (req, res) => {
 };
 
 // export const getOverallSummary = async (req, res) => {
+
+
 //   try {
 //     const userId = req.user._id.toString();
 
@@ -677,141 +679,141 @@ export const getMyPaidExpenses = async (req, res) => {
 //   }
 // };
 
-export const getOverallSummary = async (req, res) => {
-  try {
-    const userId = req.user._id.toString();
-    const { groupId } = req.params;
+// export const getOverallSummary = async (req, res) => {
+//   try {
+//     const userId = req.user._id.toString();
+//     const { groupId } = req.params;
 
-    // ----------------------------------------------------
-    // 1️⃣ FETCH GROUP + MEMBERS
-    // ----------------------------------------------------
-    const group = await Group.findById(groupId).populate("members.user", "name");
-    if (!group) return res.status(404).json({ message: "Group not found" });
+//     // ----------------------------------------------------
+//     // 1️⃣ FETCH GROUP + MEMBERS
+//     // ----------------------------------------------------
+//     const group = await Group.findById(groupId).populate("members.user", "name");
+//     if (!group) return res.status(404).json({ message: "Group not found" });
 
-    const members = group.members.map((m) => ({
-      id: m.user._id.toString(),
-      name: m.user.name,
-    }));
+//     const members = group.members.map((m) => ({
+//       id: m.user._id.toString(),
+//       name: m.user.name,
+//     }));
 
-    // ----------------------------------------------------
-    // 2️⃣ INIT BALANCE MATRIX (ALL ZERO)
-    // ----------------------------------------------------
-    const balance = {};
-    members.forEach((a) => {
-      balance[a.id] = {};
-      members.forEach((b) => {
-        if (a.id !== b.id) balance[a.id][b.id] = 0;
-      });
-    });
+//     // ----------------------------------------------------
+//     // 2️⃣ INIT BALANCE MATRIX (ALL ZERO)
+//     // ----------------------------------------------------
+//     const balance = {};
+//     members.forEach((a) => {
+//       balance[a.id] = {};
+//       members.forEach((b) => {
+//         if (a.id !== b.id) balance[a.id][b.id] = 0;
+//       });
+//     });
 
-    // ----------------------------------------------------
-    // 3️⃣ APPLY EXPENSE LOGIC (ONLY LENT)
-    // ----------------------------------------------------
-    const expenses = await Expense.find({ group: groupId });
+//     // ----------------------------------------------------
+//     // 3️⃣ APPLY EXPENSE LOGIC (ONLY LENT)
+//     // ----------------------------------------------------
+//     const expenses = await Expense.find({ group: groupId });
 
-    expenses.forEach((exp) => {
-      exp.splitDetails.forEach((sd) => {
-        if (sd.type !== "lent") return;
+//     expenses.forEach((exp) => {
+//       exp.splitDetails.forEach((sd) => {
+//         if (sd.type !== "lent") return;
 
-        const payer = sd.user.toString();
-        const related = sd.relatedUsers.map((u) => u.toString());
-        const perHead = sd.amount / related.length;
+//         const payer = sd.user.toString();
+//         const related = sd.relatedUsers.map((u) => u.toString());
+//         const perHead = sd.amount / related.length;
 
-        related.forEach((other) => {
-          balance[other][payer] += perHead; // other owes payer
-        });
-      });
-    });
+//         related.forEach((other) => {
+//           balance[other][payer] += perHead; // other owes payer
+//         });
+//       });
+//     });
 
-    // ----------------------------------------------------
-    // 4️⃣ APPLY SETTLEMENT LOGIC
-    // ----------------------------------------------------
-    const settlements = await Settlement.find({ group: groupId });
+//     // ----------------------------------------------------
+//     // 4️⃣ APPLY SETTLEMENT LOGIC
+//     // ----------------------------------------------------
+//     const settlements = await Settlement.find({ group: groupId });
 
-    settlements.forEach((s) => {
-      const from = s.fromUser.toString(); // fromUser → paid back
-      const to = s.toUser.toString();
-      const amt = Number(s.amount);
+//     settlements.forEach((s) => {
+//       const from = s.fromUser.toString(); // fromUser → paid back
+//       const to = s.toUser.toString();
+//       const amt = Number(s.amount);
 
-      if (balance[from][to] !== undefined) {
-        balance[from][to] -= amt;
-        if (balance[from][to] < 0) balance[from][to] = 0; // no negative
-      }
-    });
+//       if (balance[from][to] !== undefined) {
+//         balance[from][to] -= amt;
+//         if (balance[from][to] < 0) balance[from][to] = 0; // no negative
+//       }
+//     });
 
-    // ----------------------------------------------------
-    // 5️⃣ AUTO NETTING (EXPENSE VS EXPENSE)
-    // ----------------------------------------------------
-    members.forEach((a) => {
-      members.forEach((b) => {
-        if (a.id === b.id) return;
+//     // ----------------------------------------------------
+//     // 5️⃣ AUTO NETTING (EXPENSE VS EXPENSE)
+//     // ----------------------------------------------------
+//     members.forEach((a) => {
+//       members.forEach((b) => {
+//         if (a.id === b.id) return;
 
-        const ab = balance[a.id][b.id]; // a owes b
-        const ba = balance[b.id][a.id]; // b owes a
+//         const ab = balance[a.id][b.id]; // a owes b
+//         const ba = balance[b.id][a.id]; // b owes a
 
-        if (ab > 0 && ba > 0) {
-          const net = Math.abs(ab - ba);
+//         if (ab > 0 && ba > 0) {
+//           const net = Math.abs(ab - ba);
 
-          if (ab > ba) {
-            balance[a.id][b.id] = net;
-            balance[b.id][a.id] = 0;
-          } else {
-            balance[b.id][a.id] = net;
-            balance[a.id][b.id] = 0;
-          }
-        }
-      });
-    });
+//           if (ab > ba) {
+//             balance[a.id][b.id] = net;
+//             balance[b.id][a.id] = 0;
+//           } else {
+//             balance[b.id][a.id] = net;
+//             balance[a.id][b.id] = 0;
+//           }
+//         }
+//       });
+//     });
 
-    // ----------------------------------------------------
-    // 6️⃣ FINAL RESULT FOR LOGGED-IN USER
-    // ----------------------------------------------------
-    const result = [];
-    const EPS = 0.0001;
+//     // ----------------------------------------------------
+//     // 6️⃣ FINAL RESULT FOR LOGGED-IN USER
+//     // ----------------------------------------------------
+//     const result = [];
+//     const EPS = 0.0001;
 
-    members.forEach((m) => {
-      if (m.id === userId) return;
+//     members.forEach((m) => {
+//       if (m.id === userId) return;
 
-      const theyOwe = balance[m.id][userId] || 0;
-      const youOwe = balance[userId][m.id] || 0;
+//       const theyOwe = balance[m.id][userId] || 0;
+//       const youOwe = balance[userId][m.id] || 0;
 
-      const net = theyOwe - youOwe;
+//       const net = theyOwe - youOwe;
 
-      if (Math.abs(net) < EPS) return; // skip zero
+//       if (Math.abs(net) < EPS) return; // skip zero
 
-      if (net > 0) {
-        result.push({
-          userId: m.id,
-          name: m.name,
-          status: "owes you",
-          amount: Math.round(net * 100) / 100,
-        });
-      } else {
-        result.push({
-          userId: m.id,
-          name: m.name,
-          status: "you owe",
-          amount: Math.round(Math.abs(net) * 100) / 100,
-        });
-      }
-    });
+//       if (net > 0) {
+//         result.push({
+//           userId: m.id,
+//           name: m.name,
+//           status: "owes you",
+//           amount: Math.round(net * 100) / 100,
+//         });
+//       } else {
+//         result.push({
+//           userId: m.id,
+//           name: m.name,
+//           status: "you owe",
+//           amount: Math.round(Math.abs(net) * 100) / 100,
+//         });
+//       }
+//     });
 
-    // ----------------------------------------------------
-    // 7️⃣ SEND RESPONSE
-    // ----------------------------------------------------
-    return res.json({
-      message: "Overall summary",
-      data: result,
-    });
+//     // ----------------------------------------------------
+//     // 7️⃣ SEND RESPONSE
+//     // ----------------------------------------------------
+//     return res.json({
+//       message: "Overall summary",
+//       data: result,
+//     });
 
-  } catch (err) {
-    console.error("getOverallSummary error:", err);
-    return res.status(500).json({
-      message: "Failed to load summary",
-      error: err.message,
-    });
-  }
-};
+//   } catch (err) {
+//     console.error("getOverallSummary error:", err);
+//     return res.status(500).json({
+//       message: "Failed to load summary",
+//       error: err.message,
+//     });
+//   }
+// };
 
 
 
@@ -885,6 +887,148 @@ export const getOverallSummary = async (req, res) => {
 //     });
 //   }
 // };
+
+export const getOverallSummary = async (req, res) => {
+  try {
+    const userId = req.user._id.toString();
+    const { groupId } = req.params;
+
+    // ----------------------------------------------------
+    // 1️⃣ FETCH GROUP + MEMBERS
+    // ----------------------------------------------------
+    const group = await Group.findById(groupId).populate("members.user", "name");
+    if (!group) return res.status(404).json({ message: "Group not found" });
+
+    const members = group.members.map((m) => ({
+      id: m.user._id.toString(),
+      name: m.user.name,
+    }));
+
+    // ----------------------------------------------------
+    // 2️⃣ INIT BALANCE MATRIX
+    // balance[debtor][creditor] = amount debtor owes creditor
+    // ----------------------------------------------------
+    const balance = {};
+    members.forEach((a) => {
+      balance[a.id] = {};
+      members.forEach((b) => {
+        if (a.id !== b.id) balance[a.id][b.id] = 0;
+      });
+    });
+
+    // ----------------------------------------------------
+    // 3️⃣ APPLY EXPENSE AMOUNTS (ONLY LENT PART)
+    // ----------------------------------------------------
+    const expenses = await Expense.find({ group: groupId });
+
+    expenses.forEach((exp) => {
+      exp.splitDetails.forEach((sd) => {
+        if (sd.type !== "lent") return;
+
+        const creditor = sd.user.toString(); // payer
+        const relatedUsers = sd.relatedUsers.map((u) => u.toString());
+        const perHead = sd.amount / relatedUsers.length;
+
+        relatedUsers.forEach((debtor) => {
+          balance[debtor][creditor] += perHead; // debtor owes creditor
+        });
+      });
+    });
+
+    // ----------------------------------------------------
+    // 4️⃣ APPLY SETTLEMENT LOGIC (CORRECT DIRECTION)
+    // debtor = toUser, creditor = fromUser
+    // ----------------------------------------------------
+    const settlements = await Settlement.find({ group: groupId });
+
+    settlements.forEach((s) => {
+      const creditor = s.fromUser.toString(); // paid back
+      const debtor = s.toUser.toString();     // one who owed
+      const amt = Number(s.amount);
+
+      if (balance[debtor] && balance[debtor][creditor] !== undefined) {
+        balance[debtor][creditor] -= amt;
+
+        if (balance[debtor][creditor] < 0) {
+          balance[debtor][creditor] = 0;
+        }
+      }
+    });
+
+    // ----------------------------------------------------
+    // 5️⃣ AUTO NETTING (A owes B & B owes A → convert to single direction)
+    // ----------------------------------------------------
+    members.forEach((a) => {
+      members.forEach((b) => {
+        if (a.id === b.id) return;
+
+        const ab = balance[a.id][b.id]; // a owes b
+        const ba = balance[b.id][a.id]; // b owes a
+
+        if (ab > 0 && ba > 0) {
+          const net = Math.abs(ab - ba);
+
+          if (ab > ba) {
+            balance[a.id][b.id] = net;
+            balance[b.id][a.id] = 0;
+          } else {
+            balance[b.id][a.id] = net;
+            balance[a.id][b.id] = 0;
+          }
+        }
+      });
+    });
+
+    // ----------------------------------------------------
+    // 6️⃣ FINAL RESULT (LOGGED-IN USER)
+    // ----------------------------------------------------
+    const result = [];
+    const EPS = 0.0001;
+
+    members.forEach((m) => {
+      if (m.id === userId) return;
+
+      const theyOwe = balance[m.id][userId] || 0; // they → you
+      const youOwe = balance[userId][m.id] || 0;  // you → them
+
+      const net = theyOwe - youOwe;
+
+      if (Math.abs(net) < EPS) return; // skip settled
+
+      if (net > 0) {
+        result.push({
+          userId: m.id,
+          name: m.name,
+          status: "you are owed", // they owe you
+          amount: Math.round(net * 100) / 100,
+        });
+      } else {
+        result.push({
+          userId: m.id,
+          name: m.name,
+          status: "you owe", // you owe them
+          amount: Math.round(Math.abs(net) * 100) / 100,
+        });
+      }
+    });
+
+    // ----------------------------------------------------
+    // 7️⃣ SEND RESPONSE
+    // ----------------------------------------------------
+    return res.json({
+      message: "Overall summary",
+      data: result,
+    });
+
+  } catch (err) {
+    console.error("getOverallSummary error:", err);
+    return res.status(500).json({
+      message: "Failed to load summary",
+      error: err.message,
+    });
+  }
+};
+
 
 export const getExpenseHistory = async (req, res) => {
   try {
